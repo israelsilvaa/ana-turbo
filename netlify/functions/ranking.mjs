@@ -6,6 +6,10 @@ const json = (b, s = 200) =>
     status: s,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
+const cleanCar = (c) =>
+  c && Number.isInteger(c.m) && c.m >= 0 && c.m < 4 && Number.isInteger(c.c) && c.c >= 0 && c.c < 8 && Number.isInteger(c.d) && c.d >= 0 && c.d < 3
+    ? { m: c.m, c: c.c, d: c.d }
+    : null;
 const okId = (s) => /^[a-z0-9-]{8,64}$/.test(s || "");
 const cleanName = (s) => String(s || "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 16);
 
@@ -29,9 +33,9 @@ export default async (req) => {
     const me = new URL(req.url).searchParams.get("me");
     const mine = okId(me) ? await hash(me) : null;
     const list = await all(store);
-    const top = list.slice(0, 30).map((x) => ({ k: x.k, name: x.name, best: x.best, mine: x.k === mine }));
+    const top = list.slice(0, 30).map((x) => ({ k: x.k, name: x.name, best: x.best, car: x.car || null, mine: x.k === mine }));
     const i = mine ? list.findIndex((x) => x.k === mine) : -1;
-    const m = i >= 0 ? { k: list[i].k, name: list[i].name, best: list[i].best, rank: i + 1 } : null;
+    const m = i >= 0 ? { k: list[i].k, name: list[i].name, best: list[i].best, car: list[i].car || null, rank: i + 1 } : null;
     return json({ top, me: m, total: list.length });
   }
 
@@ -46,6 +50,8 @@ export default async (req) => {
     if (b.dist === undefined) {
       if (!old) return json({ error: "none" }, 409);
       old.name = name || old.name;
+      const cc = cleanCar(b.car);
+      if (cc) old.car = cc;
       await store.setJSON(k, old);
       return json({ ok: true, k });
     }
@@ -57,6 +63,7 @@ export default async (req) => {
       k,
       name: name || old?.name || "Anônimo",
       best: Math.max(prev, d),
+      car: cleanCar(b.car) || old?.car || null,
       t: d > prev ? Date.now() : old?.t || Date.now(),
     });
     return json({ ok: true, k, best: Math.max(prev, d) });
