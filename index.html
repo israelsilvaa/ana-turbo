@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#140F24">
+<title>AnaTurbo</title>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#140F24;--pk:#FF2E88;--yl:#FFD60A;--tl:#19E3C2;--sf:#2d2347}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;touch-action:none}
+body{height:100dvh;font:700 16px system-ui,sans-serif;color:#fff;display:flex;justify-content:center}
+#app{position:relative;height:100%;width:100%;max-width:480px}
+canvas{width:100%;height:100%;display:block}
+.bg{font-family:Bungee,system-ui,sans-serif;font-weight:400}
+.hud{position:absolute;top:calc(env(safe-area-inset-top) + 10px);left:14px;right:14px;display:flex;justify-content:space-between;font-size:20px;pointer-events:none;text-shadow:0 2px 0 #000a;visibility:hidden}
+#ht{position:absolute;top:calc(env(safe-area-inset-top) + 48px);width:100%;text-align:center;font-size:30px;color:var(--yl);text-shadow:0 3px 0 var(--pk);opacity:0;transition:opacity .2s;pointer-events:none}
+.ov{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px 24px calc(env(safe-area-inset-bottom) + 56px);background:#140F24e6;text-align:center}
+.ov.on{display:flex}
+h1{margin:0;font-size:46px;line-height:1;color:var(--yl);text-shadow:3px 3px 0 var(--pk)}
+h2{margin:0;font-size:32px;color:var(--pk)}
+.sub{opacity:.8;margin:0}
+.big{font-size:38px;color:var(--yl)}
+button{font:inherit;color:#fff;border:0;border-radius:18px;padding:14px 22px;background:var(--sf);width:min(100%,280px)}
+button.go{background:var(--pk);font-size:22px;box-shadow:0 5px 0 #a3125a}
+button:active{transform:translateY(3px)}
+input{font:inherit;width:min(100%,280px);padding:12px 16px;border-radius:16px;border:3px solid var(--sf);background:var(--bg);color:#fff;text-align:center}
+small{opacity:.6;font-weight:600}
+#rl{width:100%;flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:6px;touch-action:pan-y}
+.rw{display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:6px;background:var(--sf);border-radius:14px;padding:10px 12px;text-align:left}
+.rw b{color:var(--yl)}.rw em{font-style:normal;color:var(--tl)}.rw.me{background:var(--pk)}.rw.me b,.rw.me em{color:#fff}
+.dots{opacity:.7;padding:12px}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="cv"></canvas>
+  <div class="hud bg"><span id="hd">0 m</span><span id="hbs"></span></div>
+  <div id="ht" class="bg">TURBO!</div>
+
+  <div class="ov on" id="menu">
+    <h1 class="bg">AnaTurbo</h1>
+    <p class="sub" id="mi">Toque nos lados da tela para trocar de pista. Pegue ⚡ para o turbo.</p>
+    <input id="nm" maxlength="16" placeholder="Seu nome" autocomplete="off">
+    <small id="mt"></small>
+    <button class="go bg" id="play">Jogar</button>
+    <button id="rk">🏆 Ranking</button>
+  </div>
+
+  <div class="ov" id="over">
+    <h2 class="bg">Bateu!</h2>
+    <div class="big bg" id="od"></div>
+    <div id="orec"></div>
+    <div id="orank" class="sub"></div>
+    <button class="go bg" id="again">Jogar de novo</button>
+    <button id="rk2">🏆 Ranking</button>
+    <button id="home">Menu</button>
+  </div>
+
+  <div class="ov" id="rank">
+    <h2 class="bg">Ranking</h2>
+    <p class="sub">Maior distância de cada jogador. Atualiza a cada 30 s.</p>
+    <div id="rl"></div>
+    <button id="back">Voltar</button>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const ls=(k,v)=>{try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){}return null};
+let cid=ls('ana-id');
+if(!cid){cid=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,'0')).join('');ls('ana-id',cid)}
+let name=ls('ana-name')||'',best=+ls('ana-best')||0,myK=ls('ana-k')||'';
+const tag=k=>'#'+parseInt(k.slice(0,8),16).toString(36).padStart(5,'0').slice(-5);
+const fmt=n=>Math.floor(n).toLocaleString('pt-BR')+' m';
+const api=b=>fetch('/api/ranking',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:cid,...b})});
+
+// ---------- jogo ----------
+const cv=$('#cv'),cx=cv.getContext('2d'),W=360,LX=[80,180,280],COL=['#19E3C2','#4FC3F7','#B388FF','#FF8A65','#E8E8EE','#7CB342'];
+let H=640,PY=490,st='menu',px=180,lane=1,s=300,dist=0,off=0,cars=[],bolts=[],boost=0,acc=0,last=performance.now(),shake=0,shown=-1;
+function fit(){
+  const r=cv.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);
+  cv.width=r.width*d;cv.height=r.height*d;H=Math.round(W*r.height/r.width);PY=H-150;
+  cx.setTransform(cv.width/W,0,0,cv.height/H,0,0);
+}
+addEventListener('resize',fit);
+
+function start(){
+  lane=1;px=LX[1];dist=0;off=0;cars=[];bolts=[];boost=0;acc=0;shake=0;shown=-1;st='play';show('');
+}
+function spawn(){
+  const n=Math.random()<.35?2:1,o=[0,1,2].sort(()=>Math.random()-.5);
+  for(let i=0;i<n;i++){const t=Math.random()<.2;cars.push({x:LX[o[i]],y:-150,w:t?50:44,h:t?130:80,c:t?'#9AA0B8':COL[Math.random()*COL.length|0]})}
+  if(Math.random()<.3)bolts.push({x:LX[o[2]],y:-150});
+}
+function crash(){st='over';shake=1;boost=0;navigator.vibrate&&navigator.vibrate(200);setTimeout(over,700)}
+function update(dt){
+  if(st!='play'){off+=110*dt;return}
+  const b=boost>0;boost=Math.max(0,boost-dt);
+  s=Math.min(720,300+dist*.06);const v=s*(b?1.6:1);
+  off+=v*dt;dist+=v*dt/10;
+  px+=(LX[lane]-px)*Math.min(1,dt*14);
+  acc+=v*dt;if(acc>=Math.max(300,520-s*.4)){acc=0;spawn()}
+  for(let i=cars.length-1;i>=0;i--){
+    const c=cars[i];c.y+=v*.65*dt;
+    if(c.y>H+150){cars.splice(i,1);continue}
+    if(Math.abs(px-c.x)<14+c.w/2&&Math.abs(PY-c.y)<30+c.h/2){
+      if(b){cars.splice(i,1);dist+=30;shake=.5}else{crash();return}
+    }
+  }
+  for(let i=bolts.length-1;i>=0;i--){
+    const o=bolts[i];o.y+=v*dt;
+    if(o.y>H+50){bolts.splice(i,1);continue}
+    if(Math.abs(px-o.x)<30&&Math.abs(PY-o.y)<45){bolts.splice(i,1);boost=3}
+  }
+}
+const rr=(x,y,w,h,r)=>{cx.beginPath();cx.roundRect?cx.roundRect(x,y,w,h,r):cx.rect(x,y,w,h)};
+function car(x,y,w,h,c,pl){
+  cx.save();cx.translate(x,y);
+  cx.globalAlpha=.3;cx.fillStyle='#000';cx.fillRect(-w/2+3,-h/2+5,w,h);cx.globalAlpha=1;
+  cx.fillStyle='#0b0912';
+  for(const sx of[-1,1])for(const fy of[.1,.62])cx.fillRect(sx*w/2-(sx>0?3:3),-h/2+h*fy,6,h*.26);
+  cx.fillStyle=c;rr(-w/2,-h/2,w,h,10);cx.fill();
+  if(pl){cx.fillStyle='#fff';cx.fillRect(-4,-h/2,8,h)}
+  cx.fillStyle='#0d0b16';rr(-w/2+5,-h/2+h*.2,w-10,h*.2,5);cx.fill();cx.fillRect(-w/2+6,h/2-h*.26,w-12,h*.13);
+  cx.fillStyle='#FFF3B0';cx.fillRect(-w/2+3,-h/2+1,9,4);cx.fillRect(w/2-12,-h/2+1,9,4);
+  cx.fillStyle='#ff2a2a';cx.fillRect(-w/2+3,h/2-5,9,4);cx.fillRect(w/2-12,h/2-5,9,4);
+  cx.restore();
+}
+function draw(){
+  cx.save();
+  if(shake>0){shake=Math.max(0,shake-.03);cx.translate((Math.random()-.5)*16*shake,(Math.random()-.5)*16*shake)}
+  cx.fillStyle='#140F24';cx.fillRect(-20,-20,W+40,H+40);
+  cx.fillStyle='#262233';cx.fillRect(30,-20,300,H+40);
+  const o=off%60;
+  for(let y=-60+o;y<H;y+=60){
+    cx.fillStyle='#FF2E88';cx.fillRect(20,y,10,30);cx.fillRect(330,y,10,30);
+    cx.fillStyle='#fff';cx.fillRect(20,y+30,10,30);cx.fillRect(330,y+30,10,30);
+  }
+  cx.fillStyle='#19E3C2';
+  for(let y=-120+off%120;y<H;y+=120){cx.fillRect(6,y,6,6);cx.fillRect(348,y,6,6)}
+  cx.fillStyle='#ffffff66';
+  for(let y=-80+off%80;y<H;y+=80)for(const x of[130,230])cx.fillRect(x-2,y,4,40);
+  if(boost>0){cx.fillStyle='#ffffff40';for(let i=0;i<12;i++)cx.fillRect(34+(i*97)%290,(off*3+i*83)%(H+60)-60,2,60)}
+  for(const b of bolts){
+    cx.fillStyle='#FFD60A44';cx.beginPath();cx.arc(b.x,b.y,24,0,7);cx.fill();
+    cx.fillStyle='#FFD60A';cx.beginPath();cx.moveTo(b.x+4,b.y-16);cx.lineTo(b.x-9,b.y+2);cx.lineTo(b.x-1,b.y+2);cx.lineTo(b.x-4,b.y+16);cx.lineTo(b.x+9,b.y-4);cx.lineTo(b.x+1,b.y-4);cx.fill();
+  }
+  for(const c of cars)car(c.x,c.y,c.w,c.h,c.c,false);
+  if(boost>0){cx.fillStyle='#FFD60A';cx.beginPath();cx.moveTo(px-12,PY+40);cx.lineTo(px,PY+40+50+Math.random()*20);cx.lineTo(px+12,PY+40);cx.fill();cx.fillStyle='#FF8A00';cx.beginPath();cx.moveTo(px-6,PY+40);cx.lineTo(px,PY+40+28+Math.random()*10);cx.lineTo(px+6,PY+40);cx.fill()}
+  car(px,PY,44,80,'#FF2E88',true);
+  cx.restore();
+  const m=Math.floor(dist);if(m!=shown){shown=m;$('#hd').textContent=fmt(m)}
+  $('#ht').style.opacity=boost>0?1:0;
+}
+function loop(t){const dt=Math.min(.05,(t-last)/1000);last=t;update(dt);draw();requestAnimationFrame(loop)}
+function go(d){if(st=='play')lane=Math.max(0,Math.min(2,lane+d))}
+cv.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();go(e.clientX<r.left+r.width/2?-1:1)});
+addEventListener('keydown',e=>{
+  if(e.key=='ArrowLeft'||e.key=='a')go(-1);
+  if(e.key=='ArrowRight'||e.key=='d')go(1);
+  if(e.key==' '&&e.target.tagName!='INPUT'&&(st=='over'))start();
+});
+
+// ---------- telas ----------
+function show(id){
+  st=id=='menu'?'menu':id=='over'?'over':id=='rank'?'rank':st;
+  ['menu','over','rank'].forEach(i=>$('#'+i).classList.toggle('on',i==id));
+  $('.hud').style.visibility=(id=='menu'||id=='rank')?'hidden':'visible';
+}
+function menuInfo(){
+  $('#nm').value=name;
+  $('#mt').textContent=myK?'Seu código: '+tag(myK):'';
+  $('#hbs').textContent='★ '+fmt(best);
+  $('#mi').textContent=best?'Seu recorde: '+fmt(best):'Toque nos lados da tela para trocar de pista. Pegue ⚡ para o turbo.';
+}
+async function saveName(){
+  const n=$('#nm').value.replace(/[<>]/g,'').trim().slice(0,16);
+  if(!n){$('#nm').focus();return false}
+  if(n!=name){name=n;ls('ana-name',n);if(myK){try{await api({name:n})}catch(e){}}}
+  return true;
+}
+$('#nm').onchange=saveName;
+$('#play').onclick=async()=>{if(await saveName())start()};
+$('#again').onclick=start;
+$('#home').onclick=()=>{cars=[];bolts=[];boost=0;menuInfo();show('menu')};
+$('#back').onclick=()=>{menuInfo();show('menu')};
+$('#rk').onclick=$('#rk2').onclick=()=>{show('rank');loadRank()};
+
+async function over(){
+  const d=Math.floor(dist),rec=d>best;
+  if(rec){best=d;ls('ana-best',best)}
+  $('#hbs').textContent='★ '+fmt(best);
+  $('#od').textContent=fmt(d);
+  $('#orec').textContent=rec?'🎉 Novo recorde!':'Recorde: '+fmt(best);
+  $('#orank').textContent='';
+  show('over');
+  try{
+    if(name&&(rec||!myK)){const r=await api({name,dist:d});if(r.ok){myK=(await r.json()).k;ls('ana-k',myK)}}
+    if(myK){const g=await(await fetch('/api/ranking?me='+cid,{cache:'no-store'})).json();if(g.me)$('#orank').textContent='Você está em '+g.me.rank+'º lugar '+tag(g.me.k)}
+  }catch(e){}
+}
+
+function rowEl(x,i){
+  const d=document.createElement('div');d.className='rw'+(x.mine?' me':'');d.innerHTML='<b></b><span></span><em></em>';
+  d.children[0].textContent=i+'º';
+  const n=d.children[1];n.textContent=x.name+' ';const t=document.createElement('small');t.textContent=tag(x.k);n.append(t);
+  d.children[2].textContent=fmt(x.best);return d;
+}
+async function loadRank(){
+  const el=$('#rl');
+  try{
+    const r=await fetch('/api/ranking?me='+cid,{cache:'no-store'});
+    if(!r.ok)throw 0;
+    const j=await r.json();
+    if(j.me){myK=j.me.k;ls('ana-k',myK)}
+    const rows=j.top.map((x,i)=>rowEl(x,i+1));
+    if(j.me&&!j.top.some(x=>x.mine)){const dd=document.createElement('div');dd.className='dots';dd.textContent='⋯';rows.push(dd,rowEl({...j.me,mine:true},j.me.rank))}
+    if(!rows.length){const m=document.createElement('div');m.className='dots';m.textContent='Ninguém no ranking ainda. Seja a primeira!';rows.push(m)}
+    el.replaceChildren(...rows);
+  }catch(e){
+    el.textContent='O ranking só funciona com o site publicado na Netlify (com a função ranking).';
+  }
+}
+setInterval(()=>{if(st=='rank'&&!document.hidden)loadRank()},30000);
+
+fit();menuInfo();show('menu');requestAnimationFrame(loop);
+</script>
+</body>
+</html>
